@@ -280,7 +280,7 @@ pub fn d2fixed_buffered_n(d: f64, precision: usize, result: &mut [u8]) -> usize 
         let mut i = 0;
         if blocks <= MIN_BLOCK_2[idx as usize].into() {
             i = blocks;
-            let dest = &mut result[index..precision];
+            let dest = &mut result[index..index + precision];
             dest.fill(b'0');
             index += precision;
         } else if i < MIN_BLOCK_2[idx as usize].into() {
