@@ -105,6 +105,8 @@
 
 mod buffer;
 mod common;
+mod d2fixed;
+mod d2fixed_full_table;
 mod d2s;
 #[cfg(not(feature = "small"))]
 mod d2s_full_table;
@@ -117,6 +119,8 @@ mod f2s_intrinsics;
 mod pretty;
 
 pub use crate::buffer::{Buffer, Float};
+
+pub use crate::d2fixed::d2fixed_buffered_n;
 
 /// Unsafe functions that mirror the API of the C implementation of Ryū.
 pub mod raw {
