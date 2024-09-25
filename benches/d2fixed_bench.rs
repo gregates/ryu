@@ -16,7 +16,7 @@ pub fn d2fixed_bench(c: &mut Criterion) {
     fn format_all(precision: usize, floats: &[f64]) {
         let mut buf = [0u8; 1024];
         for f in floats {
-            let written = d2fixed_buffered_n(*f, precision, &mut buf);
+            let written = d2fixed_buffered_n(*f, precision, b'.',  &mut buf);
             let _formatted = unsafe { std::str::from_utf8_unchecked(&buf[0..written]) };
         }
     }

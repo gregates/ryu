@@ -199,7 +199,12 @@ fn copy_special_str_printf(result: &mut [u8], sign: bool, mantissa: u64) -> usiz
     8 + usize::from(sign)
 }
 
-pub fn d2fixed_buffered_n(d: f64, precision: usize, result: &mut [u8]) -> usize {
+pub fn d2fixed_buffered_n(d: f64, precision: usize, decimal_point: u8, result: &mut [u8]) -> usize {
+    d2fixed_buffered_n_limit_sig(d, f64::DIGITS as usize, precision, decimal_point, result)
+}
+
+#[cfg_attr(feature = "no-panic", inline)]
+fn d2fixed_buffered_n_limit_sig(d: f64, sig_digits: usize, precision: usize, decimal_point: u8, result: &mut [u8]) -> usize {
     let bits = d.to_bits();
 
     // Decode bits into sign, mantissa, and exponent.
@@ -208,7 +213,7 @@ pub fn d2fixed_buffered_n(d: f64, precision: usize, result: &mut [u8]) -> usize 
     let ieee_exponent = ((bits >> DOUBLE_MANTISSA_BITS) & ((1 << DOUBLE_EXPONENT_BITS) - 1)) as u32;
 
     // Case distinction; exit early for the easy cases.
-    if ieee_exponent == ((1 << DOUBLE_EXPONENT_BITS - 1)) {
+    if ieee_exponent == (1 << DOUBLE_EXPONENT_BITS) - 1 {
         return copy_special_str_printf(result, ieee_sign, ieee_mantissa);
     }
     if ieee_exponent == 0 && ieee_mantissa == 0 {
@@ -217,7 +222,7 @@ pub fn d2fixed_buffered_n(d: f64, precision: usize, result: &mut [u8]) -> usize 
         }
         result[1] = b'0';
         if precision > 0 {
-            result[2] = b'.';
+            result[2] = decimal_point;
             let dest = &mut result[3..3 + precision as usize];
             dest.fill(b'0');
         }
@@ -237,6 +242,7 @@ pub fn d2fixed_buffered_n(d: f64, precision: usize, result: &mut [u8]) -> usize 
     };
 
     let mut index = 0;
+    let mut sig_digits_written = 0;
     let mut nonzero = false;
     if ieee_sign {
         result[index] = b'-';
@@ -251,15 +257,32 @@ pub fn d2fixed_buffered_n(d: f64, precision: usize, result: &mut [u8]) -> usize 
             // Temporary: j is usually around 128, and by shifting a bit, we push it to 128 or above, which is
             // a slightly faster code path in mulShift_mod1e9. Instead, we can just increase the multipliers.
             let digits = mul_shift_mod1e9(m2 << 8, &POW10_SPLIT[POW10_OFFSET[idx] as usize + i as usize], j as i32 + 8);
+            let limit = sig_digits - sig_digits_written;
             if nonzero {
-                append_9_digits(digits as usize, &mut result[index..]);
+                let limit = 9.min(limit);
+                if limit == 9 {
+                    append_9_digits(digits as usize, &mut result[index..]);
+                } else {
+                    let digits = digits as usize / (10usize.pow(9 - limit as u32));
+                    if digits == 0 {
+                        result[index..index + limit].fill(b'0');
+                    } else {
+                        let olength = decimal_length9(digits as u32) as usize;
+                        result[index..index + limit - olength].fill(b'0');
+                        append_n_digits(olength, digits as usize, &mut result[index + limit - olength..]);
+                    }
+                    result[index + limit..index + 9].fill(b'0');
+                }
                 index += 9;
+                sig_digits_written += limit;
             } else if digits != 0 {
                 let olength = decimal_length9(digits) as usize;
                 append_n_digits(olength, digits as usize, &mut result[index..]);
                 index += olength;
+                sig_digits_written += olength;
                 nonzero = true;
             }
+
         }
     }
 
@@ -268,7 +291,7 @@ pub fn d2fixed_buffered_n(d: f64, precision: usize, result: &mut [u8]) -> usize 
         index += 1;
     }
     if precision > 0 {
-        result[index] = b'.';
+        result[index] = decimal_point;
         index += 1;
     }
 
@@ -277,6 +300,7 @@ pub fn d2fixed_buffered_n(d: f64, precision: usize, result: &mut [u8]) -> usize 
         let blocks = precision / 9 + 1;
         // 0 = don't round up; 1 = round up unconditionally; 2 = round up if odd.
         let mut round_up = 0;
+        let mut in_sig_digits = sig_digits_written > 0;
         let mut i = 0;
         if blocks <= MIN_BLOCK_2[idx as usize].into() {
             i = blocks;
@@ -303,29 +327,61 @@ pub fn d2fixed_buffered_n(d: f64, precision: usize, result: &mut [u8]) -> usize 
             // Temporary: j is usually around 128, and by shifting a bit, we push it to 128 or above, which is
             // a slightly faster code path in mulShift_mod1e9. Instead, we can just increase the multipliers.
             let mut digits = mul_shift_mod1e9(m2 << 8, &POW10_SPLIT_2[p], j + 8);
+            let limit = sig_digits - sig_digits_written;
             if i < blocks - 1 {
-                append_9_digits(digits as usize, &mut result[index..]);
+                let limit = limit.min(9);
+                if limit == 0 || digits == 0 {
+                    result[index..index + 9].fill(b'0');
+                } else if in_sig_digits && limit > 0 {
+                    let sig_leading_zeros = 9 - decimal_length9(digits) as usize;
+                    result[index..index + sig_leading_zeros].fill(b'0');
+                    let digits = digits as usize / 10usize.pow(9 - limit as u32);
+                    if digits > 0 {
+                        append_n_digits(limit - sig_leading_zeros, digits as usize, &mut result[index + sig_leading_zeros..]);
+                    }
+                    result[index + limit..index + 9].fill(b'0');
+                    sig_digits_written += limit;
+                } else if limit > 0 {
+                    let olength = decimal_length9(digits) as usize;
+                    result[index..index + 9 - olength].fill(b'0');
+                    append_n_digits(olength, digits as usize, &mut result[index + 9 - olength..]);
+                    sig_digits_written += olength;
+                    in_sig_digits = true;
+                }
                 index += 9;
             } else {
                 let maximum = precision - 9 * i;
-                let mut last_digit = 0;
-                for _ in 0..9 - maximum {
-                    last_digit = digits % 10;
-                    digits /= 10;
-                }
-                if last_digit != 5 {
-                    round_up = usize::from(last_digit > 5);
+                if maximum < limit {
+                    let mut last_digit = 0;
+                    for _ in 0..9 - maximum {
+                        last_digit = digits % 10;
+                        digits /= 10;
+                    }
+                    if last_digit != 5 {
+                        round_up = usize::from(last_digit > 5);
+                    } else {
+                        // Is m * 10^(additionalDigits + 1) / 2^(-e2) integer?
+                        let required_twos = -e2 - precision as i32 - 1;
+                        let trailing_zeros = (required_twos <= 0) || (required_twos < 60 && multiple_of_power_of_2(m2, required_twos as u32));
+                        round_up = if trailing_zeros { 2 } else { 1 };
+                    }
+                    if maximum > 0 {
+                        append_c_digits(maximum, digits as usize, &mut result[index..]);
+                        index += maximum;
+                    }
+                    break;
                 } else {
-                    // Is m * 10^(additionalDigits + 1) / 2^(-e2) integer?
-                    let required_twos = -e2 - precision as i32 - 1;
-                    let trailing_zeros = (required_twos <= 0) || (required_twos < 60 && multiple_of_power_of_2(m2, required_twos as u32));
-                    round_up = if trailing_zeros { 2 } else { 1 };
-                }
-                if maximum > 0 {
-                    append_c_digits(maximum, digits as usize, &mut result[index..]);
+                    if limit > 0 {
+                        let limit = limit.min(9);
+                        let digits = digits as usize / 10usize.pow(9 - limit as u32);
+                        let olength = decimal_length9(digits as u32) as usize;
+                        result[index..index + limit - olength].fill(b'0');
+                        append_n_digits(olength, digits as usize, &mut result[index + limit - olength..]);
+                    }
+                    result[index + limit..index + maximum].fill(b'0');
                     index += maximum;
+                    sig_digits_written += limit;
                 }
-                break;
             }
             i += 1;
         }
@@ -335,17 +391,17 @@ pub fn d2fixed_buffered_n(d: f64, precision: usize, result: &mut [u8]) -> usize 
             loop {
                 round_index -= 1;
                 if round_index == -1 || result[round_index as usize] == b'-' {
-                    result[round_index as usize + 1] = b'1';
+                    result[(round_index + 1) as usize] = b'1';
                     if dot_index > 0 {
                         result[dot_index] = b'0';
-                        result[dot_index + 1] = b'.';
+                        result[dot_index + 1] = decimal_point;
                     }
                     result[index] = b'0';
                     index += 1;
                     break;
                 }
                 let c = result[round_index as usize];
-                if c == b'.' {
+                if c == decimal_point {
                     dot_index = round_index as usize;
                     continue;
                 } else if c == b'9' {

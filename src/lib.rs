@@ -80,7 +80,7 @@
 //! Both libraries print short decimals such as 0.0000123 without scientific
 //! notation.
 
-#![no_std]
+//#![no_std]
 #![doc(html_root_url = "https://docs.rs/ryu/1.0.18")]
 #![allow(
     clippy::cast_lossless,
