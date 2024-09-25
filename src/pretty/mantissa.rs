@@ -40,6 +40,11 @@ pub unsafe fn write_mantissa_long(mut output: u64, mut result: *mut u8) {
     write_mantissa(output as u32, result);
 }
 
+pub unsafe fn write_mantissa_n_digits(n: usize, len: usize, output: u64, result: *mut u8) {
+    let mask = 10u64.pow(len.saturating_sub(n) as u32);
+    write_mantissa_long(output / mask, result);
+}
+
 #[cfg_attr(feature = "no-panic", inline)]
 pub unsafe fn write_mantissa(mut output: u32, mut result: *mut u8) {
     while output >= 10_000 {

@@ -18,7 +18,7 @@ const NEG_INFINITY: &str = "-inf";
 /// assert_eq!(printed, "1.234");
 /// ```
 pub struct Buffer {
-    bytes: [MaybeUninit<u8>; 24],
+    bytes: [MaybeUninit<u8>; 2000],
 }
 
 impl Buffer {
@@ -27,7 +27,7 @@ impl Buffer {
     #[inline]
     #[cfg_attr(feature = "no-panic", no_panic)]
     pub fn new() -> Self {
-        let bytes = [MaybeUninit::<u8>::uninit(); 24];
+        let bytes = [MaybeUninit::<u8>::uninit(); 2000];
         Buffer { bytes }
     }
 
@@ -166,6 +166,6 @@ impl Sealed for f64 {
 
     #[inline]
     unsafe fn write_to_ryu_buffer(self, result: *mut u8) -> usize {
-        raw::format64(self, result)
+        raw::format64(self, None, b'.', result)
     }
 }
